@@ -44,6 +44,7 @@
 // #include <netinet/in.h>
 // #include <netdb.h>
 #include <Winsock2.h>
+#include <Ws2tcpip.h>
 
 #include <stdlib.h>
 #include <stdio.h>
@@ -145,28 +146,32 @@ int fill_payload(int argc, char * input[])
 
   memset(&payload, 0, sizeof(payload));
   // NOTE: struct has .mac behind .signature and is filled here
-  strcpy(payload.mac, input[2]);
-  strcpy(payload.username, input[3]);
+  strcpy_s(payload.mac, sizeof(payload.mac), input[2]);
+  //only works with upper case MAC address, so let's do that
+  for (char* c = payload.mac; *c != 0; c++)
+    *c = toupper(*c);
+  strcpy_s(payload.username, sizeof(payload.username), input[3]);
 
   if (argc==5)
-    strcpy(payload.password, input[4]);
+    strcpy_s(payload.password, sizeof(payload.password), input[4]);
 
 
   MD5Init(&MD);
   MD5Update(&MD,payload.mac,0x70);
   MD5Final(MD5_key,&MD);
 
-  strncpy(payload.signature, MD5_key, sizeof(payload.signature));
+  memcpy_s(payload.signature, sizeof(payload.signature), MD5_key, sizeof(MD5_key));
   // NOTE: so why concatenate outside of the .signature boundary again
   //       using strcat? deleting this line would keep the payload the same and not
   //       cause some funky abort() or segmentation fault on newer gcc's
   // dj: this was attempting to put back the first byte of the MAC address
   // dj: which was getting stomped by the strcpy of the MD5_key above
   // dj: a better fix is to use strncpy to avoid the stomping in the 1st place
+  // MS: better fix is memcpy, since it's not a string; we are explicitly avoiding the null terminator
   //  strcat(payload.signature, input[2]);
 
   if (argc==5)
-    strncat(secret_key,input[4],sizeof(secret_key) - strlen(secret_key) - 1);
+    strncat_s(secret_key, sizeof(secret_key), input[4], sizeof(secret_key) - strlen(secret_key) - 1);
 
   Blowfish_Init(&ctx,secret_key,strlen(secret_key));
 
@@ -175,13 +180,12 @@ int fill_payload(int argc, char * input[])
   return encoded_len;
 }
 
-int PORT = 23;
+u_short PORT = 23;
 
 int main(int argc, char * argv[])
 {
 
   int datasize;
-  int i;
   int sock;
   struct sockaddr_in si_other;
   WSADATA wsa;
@@ -210,7 +214,11 @@ int main(int argc, char * argv[])
   memset((char *) &si_other, 0, sizeof(si_other));
   si_other.sin_family = AF_INET;
   si_other.sin_port = htons(PORT);
-  si_other.sin_addr.S_un.S_addr = inet_addr(argv[1]);
+  if (inet_pton(AF_INET, argv[1], &si_other.sin_addr) != 1)
+  {
+    printf("inet_pton failed. Error Code : %d", WSAGetLastError());
+    exit(EXIT_FAILURE);
+  }
 
   if (sendto(sock, output_buf, datasize , 0 , (struct sockaddr *) &si_other, sizeof(si_other)) == SOCKET_ERROR)
   {
